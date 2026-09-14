@@ -6,14 +6,6 @@ The Cargo package name remains `blockpad` so the existing Dioxus/WASM build keep
 
 ## Run locally
 
-The complete `Cargo.lock` and `src/main.rs` are stored as matching slices under `parts/` (GitHub file-write size). Concatenate them once after clone:
-
-```bash
-cat parts/Cargo.lock.0{0,1,2,3,4,5,6,7} > Cargo.lock
-mkdir -p src
-cat parts/main.rs.0{0,1,2,3,4,5,6,7,8,9} parts/main.rs.10 > src/main.rs
-```
-
 Install the Rust WASM target and Dioxus CLI once:
 
 ```bash
