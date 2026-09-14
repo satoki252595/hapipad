@@ -1,0 +1,12 @@
+[application]
+name = "blockpad"
+asset_dir = "assets"
+
+[web.wasm_opt]
+level = "z"
+
+[web.app]
+title = "Blockpad — local writing workspace"
+
+[web.watcher]
+watch_path = ["src", "assets", "index.html"]
