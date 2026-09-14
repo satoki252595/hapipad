@@ -31,4 +31,4 @@ Markdown の ` ```mermaid ` フェンス、HTML の `pre.mermaid`、表、ネス
 
 ## Editor controls
 
-Type `/` in a block to switch its kind; `/mermaid` creates a Mermaid source block and `/ 指摘` or `/comment` creates a review note. Drag the handle to reorder blocks, or use `Alt + ↑` / `Alt + ↓`. `Enter` inserts a block; `Shift + Enter` keeps a line break. `Cmd/Ctrl + B` and `Cmd/Ctrl + I` add Markdown emphasis markers. IME composition events do not create or delete blocks.
+Type `/` in a block to switch its kind; `/mermaid` creates a Mermaid source block and `/指摘` or `/comment` creates a review note. Drag the handle to reorder blocks, or use `Alt + ↑` / `Alt + ↓`. `Enter` inserts a block; `Shift + Enter` keeps a line break. `Cmd/Ctrl + B` and `Cmd/Ctrl + I` add Markdown emphasis markers. IME composition events do not create or delete blocks.
