@@ -1,0 +1,266 @@
+mn in 0..column_count {
+                        div { class: "editor-column",
+                            div { class: "column-label", "{column + 1} 列目" }
+                            for (child_index, child) in children.iter().filter(|(_, child)| child.column as usize == column) {
+                                {render_editor_tree(
+                                    child.clone(),
+                                    *child_index,
+                                    all_blocks.clone(),
+                                    document,
+                                    slash_for,
+                                    slash_index,
+                                    dragged,
+                                    drop_target,
+                                    notice,
+                                    is_find_match,
+                                    is_active_find_match,
+                                )}
+                            }
+                            button {
+                                class: "add-child",
+                                onclick: move |_| {
+                                    let mut document = document;
+                                    let child_id = document.with_mut(|doc| doc.add_child(id, column as u8));
+                                    focus_editor_block(child_id);
+                                },
+                                "+ この列に追加"
+                            }
+                            if column == column_count - 1 && column_count < 3 {
+                                button {
+                                    class: "add-child add-column",
+                                    onclick: move |_| {
+                                        let mut document = document;
+                                        let child_id = document.with_mut(|doc| doc.add_child(id, (column + 1) as u8));
+                                        focus_editor_block(child_id);
+                                    },
+                                    "+ 3 列目を追加"
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                div { class: "group-children",
+                    for (child_index, child) in children {
+                        {render_editor_tree(
+                            child,
+                            child_index,
+                            all_blocks.clone(),
+                            document,
+                            slash_for,
+                            slash_index,
+                            dragged,
+                            drop_target,
+                            notice,
+                            is_find_match,
+                            is_active_find_match,
+                        )}
+                    }
+                    button {
+                        class: "add-child",
+                        onclick: move |_| {
+                            let mut document = document;
+                            let child_id = document.with_mut(|doc| doc.add_child(id, 0));
+                            focus_editor_block(child_id);
+                        },
+                        "+ 子ブロックを追加"
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn render_block_editor(
+    block: Block,
+    index: usize,
+    mut document: Signal<DocumentState>,
+    mut slash_for: Signal<Option<u32>>,
+    mut slash_index: Signal<usize>,
+    mut dragged: Signal<Option<usize>>,
+    mut drop_target: Signal<Option<usize>>,
+    mut notice: Signal<String>,
+    is_find_match: bool,
+    is_active_find_match: bool,
+) -> Element {
+    let id = block.id;
+    let kind = block.kind;
+    let text = block.text.clone();
+    let mermaid_source = text.clone();
+    let is_checked = block.checked;
+    let mut class = if dragged() == Some(index) {
+        format!("block-row {} dragging", kind.class_name())
+    } else {
+        format!("block-row {}", kind.class_name())
+    };
+    if drop_target() == Some(index) {
+        class.push_str(" drop-target");
+    }
+    if is_active_find_match {
+        class.push_str(" search-current");
+    } else if is_find_match {
+        class.push_str(" search-match");
+    }
+    let input_id = format!("editor-block-{id}");
+    let block_anchor = format!("block-{id}");
+
+    rsx! {
+        div {
+            class: "{class}",
+            draggable: true,
+            ondragstart: move |_| dragged.set(Some(index)),
+            ondragover: move |event| {
+                event.prevent_default();
+                drop_target.set(Some(index));
+            },
+            ondragleave: move |_| drop_target.set(None),
+            ondrop: move |event| {
+                event.prevent_default();
+                let from = dragged();
+                if let Some(from) = from {
+                    if from != index {
+                        let moved_into_group = document.with_mut(|doc| {
+                            let source = doc.blocks.get(from).map(|block| block.id);
+                            source.is_some_and(|source| drop_block_on(doc, source, id))
+                        });
+                        if moved_into_group {
+                            let target_is_group = document()
+                                .blocks
+                                .iter()
+                                .find(|block| block.id == id)
+                                .is_some_and(|block| block.kind.can_have_children());
+                            notice.set(if target_is_group {
+                                "ブロックをグループへ移動しました".to_string()
+                            } else {
+                                "ブロックを並べ替えました".to_string()
+                            });
+                        }
+                    }
+                }
+                dragged.set(None);
+                drop_target.set(None);
+            },
+            ondragend: move |_| {
+                dragged.set(None);
+                drop_target.set(None);
+            },
+            if dragged().is_some() && dragged() != Some(index) {
+                div { class: "column-drop-zones",
+                    div {
+                        class: "column-drop-zone left",
+                        title: "ここへドロップして左カラムを作る",
+                        ondragover: move |event| event.prevent_default(),
+                        ondrop: move |event| {
+                            event.prevent_default();
+                            event.stop_propagation();
+                            if let Some(from) = dragged() {
+                                let changed = document.with_mut(|doc| {
+                                    let source = doc.blocks.get(from).map(|block| block.id);
+                                    source.and_then(|source| create_columns(doc, source, id, false)).is_some()
+                                });
+                                notice.set(if changed {
+                                    "左カラムを作成しました".to_string()
+                                } else {
+                                    "カラムは最大 3 列です".to_string()
+                                });
+                            }
+                            dragged.set(None);
+                            drop_target.set(None);
+                        }
+                    }
+                    div {
+                        class: "column-drop-zone right",
+                        title: "ここへドロップして右カラムを作る",
+                        ondragover: move |event| event.prevent_default(),
+                        ondrop: move |event| {
+                            event.prevent_default();
+                            event.stop_propagation();
+                            if let Some(from) = dragged() {
+                                let changed = document.with_mut(|doc| {
+                                    let source = doc.blocks.get(from).map(|block| block.id);
+                                    source.and_then(|source| create_columns(doc, source, id, true)).is_some()
+                                });
+                                notice.set(if changed {
+                                    "右カラムを作成しました".to_string()
+                                } else {
+                                    "カラムは最大 3 列です".to_string()
+                                });
+                            }
+                            dragged.set(None);
+                            drop_target.set(None);
+                        }
+                    }
+                }
+            }
+            button {
+                class: "drag-handle",
+                title: "ドラッグして並べ替える",
+                aria_label: "ドラッグしてブロックを並べ替える",
+                "⣿"
+            }
+            div { class: "input-wrap",
+                if kind == BlockKind::Mermaid {
+                    div { class: "block-kind-hint", "Mermaid ソース · 変更すると右側の図にすぐ反映されます" }
+                }
+                if kind == BlockKind::Checklist {
+                    div { class: if is_checked { "check-wrap checked" } else { "check-wrap" },
+                        input {
+                            class: "checkbox",
+                            r#type: "checkbox",
+                            checked: is_checked,
+                            aria_label: "チェックリストを完了にする",
+                            onchange: move |_| {
+                                document.with_mut(|doc| {
+                                    if let Some(item) = doc.blocks.iter_mut().find(|item| item.id == id) {
+                                        item.checked = !item.checked;
+                                    }
+                                });
+                            }
+                        }
+                        textarea {
+                            id: "{input_id}",
+                            class: "block-input",
+                            rows: 1,
+                            value: "{text}",
+                            placeholder: "{placeholder(kind)}",
+                            oninput: move |event| {
+                                let value = event.value();
+                                document.with_mut(|doc| {
+                                    if let Some(item) = doc.blocks.iter_mut().find(|item| item.id == id) {
+                                        item.text = value.clone();
+                                    }
+                                });
+                                if value.starts_with('/') {
+                                    slash_for.set(Some(id));
+                                    slash_index.set(0);
+                                } else if slash_for() == Some(id) {
+                                    slash_for.set(None);
+                                }
+                            },
+                            onkeydown: move |event| handle_keydown(
+                                event,
+                                id,
+                                index,
+                                document,
+                                slash_for,
+                                slash_index,
+                                notice,
+                            ),
+                        }
+                    }
+                } else {
+                    textarea {
+                        id: "{input_id}",
+                        class: "block-input",
+                        rows: if matches!(kind, BlockKind::Code | BlockKind::Table | BlockKind::Mermaid) { 5 } else { 1 },
+                        value: "{text}",
+                        placeholder: "{placeholder(kind)}",
+                        oninput: move |event| {
+                            let value = event.value();
+                            document.with_mut(|doc| {
+                                if let Some(item) = doc.blocks.iter_mut().find(|item| item.id == id) {
+                                    item.text = value.clone();
+                                }
+                            });
+                            if kind == BlockKind::Mermaid {
+                                render_mermaid_whe
