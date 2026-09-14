@@ -196,7 +196,7 @@ fn render_block_editor(
                 class: "drag-handle",
                 title: "ドラッグして並べ替える",
                 aria_label: "ドラッグしてブロックを並べ替える",
-                "⣿"
+                "⠿"
             }
             div { class: "input-wrap",
                 if kind == BlockKind::Mermaid {
