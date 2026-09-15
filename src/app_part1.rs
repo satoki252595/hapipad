@@ -10,7 +10,7 @@ const STYLE: Asset = asset!("/assets/style.css");
 let blockpadFileHandle = null;
 
 const fileTypes = [{
-  description: "Blockpad 文書",
+  description: "Markdown / HTML 文書",
   accept: {
     "text/markdown": [".md", ".markdown"],
     "text/html": [".html", ".htm"],
@@ -176,6 +176,23 @@ export async function copy_text(text) {
   if (!ok) throw new Error("クリップボードへコピーできませんでした");
   return "copied";
 }
+
+export function persist_session(key, json) {
+  try {
+    localStorage.setItem(key, json);
+    return "ok";
+  } catch (_) {
+    return "fail";
+  }
+}
+
+export function load_session(key) {
+  try {
+    return localStorage.getItem(key) || "";
+  } catch (_) {
+    return "";
+  }
+}
 "##)]
 extern "C" {
     #[wasm_bindgen(catch)]
@@ -191,6 +208,8 @@ extern "C" {
     fn render_mermaid_block(id: &str, source: &str);
     fn find_in_page(query: &str);
     fn read_block_selection(id: u32) -> String;
+    fn persist_session(key: &str, json: &str) -> String;
+    fn load_session(key: &str) -> String;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -261,6 +280,10 @@ struct ReviewTarget {
     kind: BlockKind,
     quoted: String,
     whole_block: bool,
+    start: usize,
+    end: usize,
+    start_line: u32,
+    end_line: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -273,6 +296,10 @@ struct ReviewUi {
     copied: Signal<Option<String>>,
     composing: Signal<Option<u32>>,
     append: Signal<bool>,
+    round: Signal<u32>,
+    snapshot: Signal<Option<String>>,
+    snapshot_label: Signal<String>,
+    diff_mode: Signal<DiffMode>,
 }
 
 impl BlockKind {
@@ -621,7 +648,12 @@ fn App() -> Element {
         copied: use_signal(|| None::<String>),
         composing: use_signal(|| None::<u32>),
         append: use_signal(|| false),
+        round: use_signal(|| 0u32),
+        snapshot: use_signal(|| None::<String>),
+        snapshot_label: use_signal(|| "開いたときの文書".to_string()),
+        diff_mode: use_signal(|| DiffMode::Off),
     };
+    use_hook(move || restore_saved_review(review));
 
     let current = document();
     let preview_blocks = current.blocks.clone();
@@ -654,6 +686,11 @@ fn App() -> Element {
         .iter()
         .filter(|block| block.kind == BlockKind::ReviewComment)
         .count();
+    let review_unresolved = current
+        .blocks
+        .iter()
+        .filter(|block| block.kind == BlockKind::ReviewComment && !block.checked)
+        .count();
     let outline = current
         .blocks
         .iter()
@@ -680,9 +717,9 @@ fn App() -> Element {
                     button {
                         class: "button ghost",
                         onclick: move |_| {
-                            let mut document = document;
+                            let document = document;
                             let mut notice = notice;
-                            let mut slash_for = slash_for;
+                            let slash_for = slash_for;
                             let mut is_loading = is_loading;
                             let mut file_error = file_error;
                             is_loading.set(true);
@@ -692,13 +729,14 @@ fn App() -> Element {
                                 match load_from_browser().await {
                                     Ok(Some((name, source, content))) => {
                                         let parsed = parse_document(&name, source, &content);
-                                        document.set(parsed);
-                                        slash_for.set(None);
-                                        review.targets.set(Vec::new());
-                                        review.body.set(String::new());
-                                        review.error.set(None);
-                                        review.copied.set(None);
-                                        notice.set(format!("{name} を開きました。対象を選んでレビューできます"));
+                                        apply_opened_document(
+                                            document,
+                                            review,
+                                            notice,
+                                            slash_for,
+                                            parsed,
+                                            false,
+                                        );
                                     }
                                     Ok(None) => notice.set("開く操作を取り消しました".to_string()),
                                     Err(message) => {
@@ -710,6 +748,43 @@ fn App() -> Element {
                             });
                         },
                         "ファイルを開く"
+                    }
+                    button {
+                        class: "button ghost",
+                        title: "同じファイル選択で開き、レビューパネルを前面にする",
+                        onclick: move |_| {
+                            let document = document;
+                            let mut notice = notice;
+                            let slash_for = slash_for;
+                            let mut is_loading = is_loading;
+                            let mut file_error = file_error;
+                            is_loading.set(true);
+                            file_error.set(None);
+                            notice.set("レビューするファイルを選んでいます…".to_string());
+                            spawn(async move {
+                                match load_from_browser().await {
+                                    Ok(Some((name, source, content))) => {
+                                        let parsed = parse_document(&name, source, &content);
+                                        apply_opened_document(
+                                            document,
+                                            review,
+                                            notice,
+                                            slash_for,
+                                            parsed,
+                                            true,
+                                        );
+                                        mobile_view.set(MobileView::Review);
+                                    }
+                                    Ok(None) => notice.set("開く操作を取り消しました".to_string()),
+                                    Err(message) => {
+                                        file_error.set(Some(message.clone()));
+                                        notice.set(format!("開けませんでした：{message}"));
+                                    }
+                                }
+                                is_loading.set(false);
+                            });
+                        },
+                        "レビューで開く"
                     }
                     button {
                         class: if (review.open)() { "button ghost active-review" } else { "button ghost" },
@@ -727,8 +802,10 @@ fn App() -> Element {
                         },
                         if review_count == 0 {
                             "レビュー"
-                        } else {
+                        } else if review_unresolved == 0 {
                             {format!("レビュー {review_count}")}
+                        } else {
+                            {format!("レビュー {review_unresolved}/{review_count}")}
                         }
                     }
                     button {
@@ -1053,8 +1130,10 @@ fn render_review_panel(
                 }
             }
             p { class: "review-lead",
-                "本文をドラッグして選ぶか、ブロックの「レビュー」を押します。指摘を書いて LLM にコピーしてください。"
+                "本文をドラッグして選ぶか、ブロックの「レビュー」を押します。指摘は対象の下にスレッドとして出ます。終えると LLM に貼る全文をコピーします。"
             }
+            p { class: "review-autosave", "指摘の下書きはこのブラウザに自動保存します。サーバーは使いません。" }
+            {render_diff_section(document, review, notice)}
             label { class: "review-append",
                 input {
                     r#type: "checkbox",
@@ -1062,6 +1141,7 @@ fn render_review_panel(
                     onchange: move |_| {
                         let next = !(review.append)();
                         review.append.set(next);
+                        persist_review_now(document, review);
                     },
                 }
                 "次の選択を範囲に追加（Shift でも可）"
@@ -1093,7 +1173,12 @@ fn render_review_panel(
                     for (index, target) in targets.iter().cloned().enumerate() {
                         {
                             let quoted = target.quoted.clone();
-                            let label = format!("#{} {} · {}", target.block_id, target.kind.label(), target_scope_label(&target));
+                            let label = format!(
+                                "#{} {} · {}",
+                                target.block_id,
+                                target.kind.label(),
+                                target_range_label(&target)
+                            );
                             rsx! {
                                 article { class: "review-target-card",
                                     div { class: "review-target-meta",
@@ -1109,6 +1194,7 @@ fn render_review_panel(
                                                 }
                                                 review.targets.set(next);
                                                 review.copied.set(None);
+                                                persist_review_now(document, review);
                                             },
                                             "外す"
                                         }
@@ -1138,6 +1224,7 @@ fn render_review_panel(
                         review.body.set(event.value());
                         review.copied.set(None);
                         review.error.set(None);
+                        persist_review_now(document, review);
                     },
                 }
             }
@@ -1164,6 +1251,7 @@ fn render_review_panel(
                             sleep_ms(220).await;
                             review.body.set(generate_review_drafts(&current_targets));
                             review.generating.set(false);
+                            persist_review_now(document, review);
                             notice.set("下書きを入れました。直してから LLM にコピーしてください".to_string());
                         });
                     },
@@ -1186,12 +1274,13 @@ fn render_review_panel(
                             focus_editor_block(id);
                             notice.set("指摘ブロックを追加しました".to_string());
                             review.error.set(None);
+                            persist_review_now(document, review);
                         }
                     },
                     "指摘にする"
                 }
                 button {
-                    class: "button primary",
+                    class: "button ghost",
                     disabled: generating,
                     onclick: move |_| {
                         let doc = document();
@@ -1207,6 +1296,11 @@ fn render_review_panel(
                                 Ok(()) => {
                                     review.error.set(None);
                                     review.copied.set(Some("プロンプト".to_string()));
+                                    remember_snapshot(
+                                        document,
+                                        review,
+                                        "直前の LLM コピー".to_string(),
+                                    );
                                     notice.set("LLM に貼るプロンプトをコピーしました".to_string());
                                 }
                                 Err(message) => review.error.set(Some(message)),
@@ -1242,6 +1336,29 @@ fn render_review_panel(
                 }
                 button {
                     class: "button ghost",
+                    onclick: move |_| {
+                        let doc = document();
+                        let payload = build_comments_json(
+                            &doc,
+                            &(review.targets)(),
+                            &(review.body)(),
+                            (review.round)(),
+                        );
+                        spawn(async move {
+                            match copy_to_clipboard(&payload).await {
+                                Ok(()) => {
+                                    review.error.set(None);
+                                    review.copied.set(Some("コメントJSON".to_string()));
+                                    notice.set("指摘スレッドの JSON をコピーしました".to_string());
+                                }
+                                Err(message) => review.error.set(Some(message)),
+                            }
+                        });
+                    },
+                    "コメントJSONをコピー"
+                }
+                button {
+                    class: "button ghost",
                     disabled: generating,
                     onclick: move |_| {
                         let doc = document();
@@ -1264,11 +1381,73 @@ fn render_review_panel(
                     },
                     "プロンプトを保存"
                 }
+                button {
+                    class: "button ghost",
+                    onclick: move |_| {
+                        let doc = document();
+                        let payload = build_comments_json(
+                            &doc,
+                            &(review.targets)(),
+                            &(review.body)(),
+                            (review.round)(),
+                        );
+                        spawn(async move {
+                            match save_to_browser("md-block-editor-comments.json", &payload, "application/json").await {
+                                Ok(message) => {
+                                    review.error.set(None);
+                                    notice.set(format!("コメント JSON を書き出しました（{}）", save_status(&message)));
+                                }
+                                Err(message) => review.error.set(Some(format!("書き出せませんでした：{message}"))),
+                            }
+                        });
+                    },
+                    "コメントJSONを保存"
+                }
+                button {
+                    class: "button primary",
+                    disabled: generating,
+                    onclick: move |_| {
+                        let doc = document();
+                        let current_targets = (review.targets)();
+                        let current_body = (review.body)();
+                        let unresolved = unresolved_comments(&doc);
+                        if let Some(message) = finish_review_error(&current_targets, &current_body, &unresolved) {
+                            review.error.set(Some(message));
+                            return;
+                        }
+                        let next_round = (review.round)() + 1;
+                        let payload = build_finish_prompt(
+                            &doc,
+                            &current_targets,
+                            &current_body,
+                            &unresolved,
+                            (review.snapshot)().as_deref(),
+                            next_round,
+                        );
+                        spawn(async move {
+                            match copy_to_clipboard(&payload).await {
+                                Ok(()) => {
+                                    review.round.set(next_round);
+                                    review.error.set(None);
+                                    review.copied.set(Some("レビュー全文".to_string()));
+                                    remember_snapshot(
+                                        document,
+                                        review,
+                                        format!("ラウンド {next_round}（レビュー完了）"),
+                                    );
+                                    notice.set("レビューを終え、エージェントへ貼る全文をコピーしました".to_string());
+                                }
+                                Err(message) => review.error.set(Some(message)),
+                            }
+                        });
+                    },
+                    "レビューを終えてコピー"
+                }
             }
 
             if !prompt_preview.is_empty() {
                 details { class: "review-preview",
-                    summary { "LLM に貼る文面" }
+                    summary { "今回の下書き（LLM に貼る文面）" }
                     pre { class: "review-prompt", "{prompt_preview}" }
                 }
             }
@@ -1278,49 +1457,8 @@ fn render_review_panel(
                     "文書内の指摘はまだありません。/指摘 でも同じブロックを置けます。"
                 }
             } else {
-                div { class: "review-existing",
-                    div { class: "review-existing-head",
-                        span { {format!("文書内の指摘 {} 件", existing_comments.len())} }
-                        button {
-                            class: "mini-button",
-                            onclick: move |_| {
-                                let doc = document();
-                                let comments = doc
-                                    .blocks
-                                    .iter()
-                                    .filter(|block| block.kind == BlockKind::ReviewComment)
-                                    .cloned()
-                                    .collect::<Vec<_>>();
-                                if comments.is_empty() {
-                                    review.error.set(Some("まとめてコピーする指摘がありません。".to_string()));
-                                    return;
-                                }
-                                let payload = build_existing_comments_prompt(&doc, &comments);
-                                spawn(async move {
-                                    match copy_to_clipboard(&payload).await {
-                                        Ok(()) => {
-                                            review.error.set(None);
-                                            review.copied.set(Some("指摘まとめ".to_string()));
-                                            notice.set("文書内の指摘をまとめてコピーしました".to_string());
-                                        }
-                                        Err(message) => review.error.set(Some(message)),
-                                    }
-                                });
-                            },
-                            "まとめて LLM にコピー"
-                        }
-                    }
-                    for comment in existing_comments {
-                        {
-                            let (_, body) = review_comment_parts(&comment.text);
-                            rsx! {
-                                p { class: "review-existing-item", "{body}" }
-                            }
-                        }
-                    }
-                }
+                {render_existing_comment_cards(document, review, notice, existing_comments)}
             }
         }
     }
 }
-
