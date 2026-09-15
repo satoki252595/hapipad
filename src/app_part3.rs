@@ -1267,11 +1267,11 @@ mod tests {
             next_id: 2,
             blocks: vec![Block {
                 id: 1,
-                    kind: BlockKind::HeadingOne,
-                    text: "Brief".to_string(),
-                    checked: false,
-                    parent: None,
-                    column: 0,
+                kind: BlockKind::HeadingOne,
+                text: "Brief".to_string(),
+                checked: false,
+                parent: None,
+                column: 0,
             }],
         };
 
@@ -1388,10 +1388,10 @@ mod tests {
     #[test]
     fn slash_typeahead_supports_japanese_and_english_aliases() {
         let mermaid = slash_options("/merm");
-        let review = slash_options("/ 指摘");
+        let review = slash_options("/指摘");
         let comment = slash_options("/comment");
         let llm = slash_options("/llm");
-        let reply = slash_options("/ 返す");
+        let reply = slash_options("/返す");
 
         assert_eq!(mermaid, vec![BlockKind::Mermaid]);
         assert_eq!(review, vec![BlockKind::ReviewComment]);
