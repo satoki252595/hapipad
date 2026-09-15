@@ -1,34 +1,49 @@
-# MD Block Editor
+# Markdownブロックエディタ (MD Block Editor)
 
-MD Block Editor（Markdownブロックエディタ）は、ローカルの Markdown / HTML を Notion 風ブロックで編集する軽量な Rust/WASM アプリです。ブラウザだけでブロック編集、ライブプレビュー、Mermaid 図、指摘ブロックを備え、元のファイル形式へ保存します。
+ローカルの `.md` / `.html` を、ブラウザだけで Notion 風ブロック編集するエディタです。サーバー・アカウント・データベースは使いません。
 
-The Cargo package name remains `blockpad` so the existing Dioxus/WASM build keeps working.
+Cargo パッケージ名は `blockpad` のままです。公開名は **Markdownブロックエディタ / MD Block Editor** です。
 
-## Run locally
+## できること
 
-Install the Rust WASM target and Dioxus CLI once:
+- `/` でスラッシュコマンド（見出し、リスト、コード、表、コールアウト、カラム、Mermaid、指摘など）
+- ドラッグハンドル、または `Alt + ↑` / `Alt + ↓` で並べ替え
+- 右側のライブプレビュー（見出しアウトライン付き）
+- トップバーの ☾ / ☀ でダークモード
+- 日本語 IME の変換中にブロックを増やしたり消したりしない
+- 見出し、箇条書き、番号付き、チェックリスト、コード、引用、表、コールアウト、折りたたみ、グループ、カラム
+- 対応ブラウザは File System Access で元ファイルへ上書き保存。非対応時はファイル選択 + ダウンロード
+
+## 画面
+
+編集とライブプレビュー:
+
+![エディタとライブプレビュー](docs/screenshots/editor.png)
+
+スラッシュメニュー:
+
+![スラッシュメニュー](docs/screenshots/slash.png)
+
+見出し・リスト・コード・コールアウト・カラム:
+
+![ブロック種別](docs/screenshots/blocks.png)
+
+ダークモード:
+
+![ダークモード](docs/screenshots/dark.png)
+
+ライブプレビュー（Mermaid・表・カラム）:
+
+![ライブプレビュー](docs/screenshots/preview.png)
+
+## 起動
 
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install dioxus-cli --locked
-```
-
-Then start the browser app:
-
-```bash
 dx serve --platform web --addr 127.0.0.1 --port 43123
 ```
 
-Open `http://127.0.0.1:43123`.
+`http://127.0.0.1:43123` を開きます。
 
-## Local files
-
-- **Open file** uses the File System Access API when the browser supports it, so **Save** writes back to the original `.md` or `.html` file.
-- Browsers without that API use a file-picker upload and a safe download fallback.
-- The app has no server, account, database, or Node dependency.
-
-Markdown の ` ```mermaid ` フェンス、HTML の `pre.mermaid`、表、ネストしたリスト、リンク、図版、`details`、引用、コード、レビュー用の `> [!COMMENT]` 指摘をブロックとして扱います。
-
-## Editor controls
-
-Type `/` in a block to switch its kind; `/mermaid` creates a Mermaid source block and `/指摘` or `/comment` creates a review note. Drag the handle to reorder blocks, or use `Alt + ↑` / `Alt + ↓`. `Enter` inserts a block; `Shift + Enter` keeps a line break. `Cmd/Ctrl + B` and `Cmd/Ctrl + I` add Markdown emphasis markers. IME composition events do not create or delete blocks.
+操作: `Enter` でブロック追加、`Shift + Enter` で改行。`Cmd/Ctrl + B` / `I` で強調。`/mermaid` で図、`/指摘` または `/comment` でレビュー指摘。

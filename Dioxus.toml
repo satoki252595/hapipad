@@ -6,7 +6,7 @@ asset_dir = "assets"
 level = "z"
 
 [web.app]
-title = "MD Block Editor"
+title = "Markdownブロックエディタ — MD Block Editor"
 
 [web.watcher]
 watch_path = ["src", "assets", "index.html"]
