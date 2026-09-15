@@ -1,0 +1,48 @@
+name: Install Dioxus CLI
+description: Install a prebuilt dx binary from the Dioxus GitHub release
+
+runs:
+  using: composite
+  steps:
+    - name: Download dx
+      shell: bash
+      run: |
+        set -euo pipefail
+        version="${DX_VERSION:-0.7.10}"
+        os="${RUNNER_OS}"
+        arch="${RUNNER_ARCH}"
+        dest="${HOME}/.local/bin"
+        mkdir -p "$dest"
+        tmp="$(mktemp -d)"
+        case "${os}-${arch}" in
+          Linux-X64) asset="dx-x86_64-unknown-linux-gnu.tar.gz" ;;
+          Linux-ARM64) asset="dx-aarch64-unknown-linux-gnu.tar.gz" ;;
+          macOS-ARM64) asset="dx-aarch64-apple-darwin.tar.gz" ;;
+          macOS-X64) asset="dx-x86_64-apple-darwin.tar.gz" ;;
+          Windows-X64) asset="dx-x86_64-pc-windows-msvc.zip" ;;
+          Windows-ARM64) asset="dx-aarch64-pc-windows-msvc.zip" ;;
+          *)
+            echo "No prebuilt dx for ${os}-${arch}; installing from crates.io"
+            cargo install dioxus-cli --version "$version" --locked
+            dx --version
+            exit 0
+            ;;
+        esac
+        url="https://github.com/DioxusLabs/dioxus/releases/download/v${version}/${asset}"
+        echo "Downloading ${url}"
+        curl -sSL -o "$tmp/dx-asset" "$url"
+        if [[ "$asset" == *.zip ]]; then
+          python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$tmp/dx-asset" "$tmp"
+        else
+          tar -xf "$tmp/dx-asset" -C "$tmp"
+        fi
+        bin="$(find "$tmp" -type f \( -name dx -o -name dx.exe \) | head -n 1)"
+        if [[ -z "$bin" ]]; then
+          echo "dx binary not found in archive" >&2
+          find "$tmp" -maxdepth 3 -print >&2
+          exit 1
+        fi
+        cp "$bin" "$dest/$(basename "$bin")"
+        chmod +x "$dest/$(basename "$bin")" || true
+        echo "$dest" >> "$GITHUB_PATH"
+        "$dest/$(basename "$bin")" --version

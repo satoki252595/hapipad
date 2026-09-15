@@ -1,0 +1,209 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: GitHub Release tag to create or update
+        required: true
+        default: v0.1.0
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  DX_VERSION: "0.7.10"
+
+jobs:
+  web:
+    name: Web / WASM
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: web-wasm-${{ env.DX_VERSION }}
+
+      - name: Install binaryen (wasm-opt)
+        run: sudo apt-get update && sudo apt-get install -y binaryen zip
+
+      - name: Install Dioxus CLI
+        uses: ./.github/actions/install-dx
+
+      - name: Bundle web (root-relative, for the zip)
+        run: dx bundle --platform web --release --out-dir dist/web-zip
+
+      - name: Bundle web (GitHub Pages base path)
+        run: dx bundle --platform web --release --base-path md-block-editor --out-dir dist/web-pages
+
+      - name: Pack web artifacts
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/pack_web.py
+
+      - name: Upload web zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: md-block-editor-web
+          path: dist/upload/md-block-editor-web.zip
+          if-no-files-found: error
+
+      - name: Upload Pages site
+        uses: actions/upload-artifact@v4
+        with:
+          name: md-block-editor-pages
+          path: dist/pages/
+          if-no-files-found: error
+
+  desktop:
+    name: Desktop (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+            target: windows
+            package_types: nsis
+          - os: ubuntu-latest
+            label: Linux
+            target: linux
+            package_types: appimage
+          - os: macos-latest
+            label: macOS
+            target: macos
+            package_types: macos dmg
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux WebView packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev \
+            libssl-dev \
+            libglib2.0-dev \
+            libasound2-dev \
+            libudev-dev \
+            patchelf \
+            desktop-file-utils \
+            librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: desktop-${{ matrix.target }}-${{ env.DX_VERSION }}
+
+      - name: Install Dioxus CLI
+        uses: ./.github/actions/install-dx
+
+      - name: Bundle desktop
+        id: bundle
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          types=()
+          for t in ${{ matrix.package_types }}; do
+            types+=(--package-types "$t")
+          done
+          dx bundle --platform desktop --release --no-default-features --features desktop "${types[@]}"
+
+      - name: Collect desktop artifacts
+        if: always()
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: python3 .github/scripts/collect_desktop.py || python .github/scripts/collect_desktop.py
+
+      - name: Upload desktop artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: md-block-editor-${{ matrix.target }}
+          path: dist/upload/*
+          if-no-files-found: ignore
+
+  pages:
+    name: GitHub Pages
+    needs: web
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: md-block-editor-pages
+          path: site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  release:
+    name: GitHub Release
+    needs: [web, desktop]
+    if: always() && needs.web.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: md-block-editor-*
+          path: artifacts
+          merge-multiple: false
+
+      - name: Flatten release files
+        run: |
+          set -euo pipefail
+          mkdir -p release-files
+          find artifacts -type f \( -name '*.zip' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.exe' -o -name '*.msi' -o -name '*.deb' -o -name '*.tgz' \) -exec cp -v {} release-files/ \;
+          ls -la release-files
+          test -f release-files/md-block-editor-web.zip
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: release-files/*
+          body: |
+            Markdownブロックエディタ / MD Block Editor ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+            すぐ使う:
+            - ブラウザ: https://satoki252595.github.io/md-block-editor/
+            - Web/WASM zip: `md-block-editor-web.zip`（どの OS でもブラウザで動きます）
+            - Windows: `md-block-editor-windows-x64-setup.exe`（ジョブが成功した場合）
+            - Linux: `md-block-editor-linux-x86_64.AppImage`（ジョブが成功した場合）
+            - macOS: `md-block-editor-macos-arm64.dmg`（ジョブが成功した場合）
+
+            デスクトップ向けファイルが欠けている場合は Web zip または Pages を使ってください。

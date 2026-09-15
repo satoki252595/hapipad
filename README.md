@@ -4,6 +4,15 @@
 
 Cargo パッケージ名は `blockpad` のままです。公開名は **Markdownブロックエディタ / MD Block Editor** です。
 
+## すぐ使う
+
+ビルド済みファイルは Git には入れていません。[最新リリース](https://github.com/satoki252595/md-block-editor/releases/latest) から取ってください。ブラウザですぐ開くなら [GitHub Pages](https://satoki252595.github.io/md-block-editor/) です。
+
+- Windows: `md-block-editor-windows-x64-setup.exe`
+- Linux: `md-block-editor-linux-x86_64.AppImage`
+- macOS (Apple Silicon): `md-block-editor-macos-arm64.dmg`
+- どの OS でも: `md-block-editor-web.zip`（静的配信）または Pages
+
 ## できること
 
 - `/` でスラッシュコマンド（見出し、リスト、コード、表、コールアウト、カラム、Mermaid、指摘など）

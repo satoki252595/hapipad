@@ -10,3 +10,7 @@ title = "Markdownブロックエディタ — MD Block Editor"
 
 [web.watcher]
 watch_path = ["src", "assets", "index.html"]
+
+[bundle]
+identifier = "dev.md-block-editor"
+publisher = "MD Block Editor"
