@@ -101,11 +101,16 @@ fn parse_markdown(doc: &mut DocumentState, content: &str) {
                     break;
                 }
             }
-            doc.blocks.push(new_block(
-                &mut doc.next_id,
-                BlockKind::ReviewComment,
-                &parts.join("\n"),
-            ));
+            doc.blocks.push({
+                let text = parts.join("\n");
+                let mut block = new_block(
+                    &mut doc.next_id,
+                    BlockKind::ReviewComment,
+                    &text,
+                );
+                block.checked = comment_is_resolved(&text);
+                block
+            });
         } else if let Some(value) = line.strip_prefix("> [!NOTE]") {
             let text = if value.trim().is_empty() && index + 1 < lines.len() {
                 index += 1;
@@ -383,11 +388,14 @@ fn parse_html_fragment_in(
                 if tag.attributes.contains("review-comment")
                     || tag.attributes.contains("data-block=\"comment\"")
                 {
+                    let text = strip_tags(inner);
+                    let resolved = tag.attributes.contains("data-resolved=\"true\"")
+                        || comment_is_resolved(&text);
                     push_html_block_in(
                         doc,
                         BlockKind::ReviewComment,
-                        &strip_tags(inner),
-                        false,
+                        &text,
+                        resolved,
                         parent,
                         column,
                     );
@@ -1490,18 +1498,18 @@ mod tests {
     #[test]
     fn review_prompt_includes_quote_and_instruction() {
         let document = DocumentState::starter();
-        let targets = vec![ReviewTarget {
-            block_id: 2,
-            kind: BlockKind::Paragraph,
-            quoted: "初回体験を短くし、利用者が最初の価値に到達するまでの手順を明確にします。".to_string(),
-            whole_block: false,
-        }];
+        let targets = vec![review_target(
+            2,
+            BlockKind::Paragraph,
+            "初回体験を短くし、利用者が最初の価値に到達するまでの手順を明確にします。",
+            false,
+        )];
         let review = "モバイルの招待も同じ導線で確認してください。";
         let prompt = build_llm_prompt(&document, &targets, review);
         let json = build_llm_json(&document, &targets, review);
 
         assert!(prompt.contains("Markdown ブロックエディタからのレビュー"));
-        assert!(prompt.contains("部分選択"));
+        assert!(prompt.contains("部分選択 · L1"));
         assert!(prompt.contains("初回体験を短くし"));
         assert!(prompt.contains("モバイルの招待も同じ導線で確認してください。"));
         assert!(prompt.contains("変更後の Markdown を返す"));
@@ -1514,18 +1522,8 @@ mod tests {
     fn review_comment_round_trips_quote_and_body() {
         let mut document = DocumentState::starter();
         let targets = vec![
-            ReviewTarget {
-                block_id: 2,
-                kind: BlockKind::Paragraph,
-                quoted: "初回体験を短くする".to_string(),
-                whole_block: false,
-            },
-            ReviewTarget {
-                block_id: 7,
-                kind: BlockKind::Mermaid,
-                quoted: "flowchart LR\n  A --> B".to_string(),
-                whole_block: true,
-            },
+            review_target(2, BlockKind::Paragraph, "初回体験を短くする", false),
+            review_target(7, BlockKind::Mermaid, "flowchart LR\n  A --> B", true),
         ];
         let id = insert_review_comment(&mut document, &targets, "分岐の失敗時を足してください。")
             .unwrap();
@@ -1568,24 +1566,15 @@ mod tests {
         assert!(empty.contains("対象が空"));
         assert!(review_export_error(&[], "本文").is_some());
         assert!(review_export_error(
-            &[ReviewTarget {
-                block_id: 1,
-                kind: BlockKind::Paragraph,
-                quoted: "x".into(),
-                whole_block: true,
-            }],
+            &[review_target(1, BlockKind::Paragraph, "x", true)],
             "   "
         )
         .is_some());
         assert!(review_export_error(
-            &[ReviewTarget {
-                block_id: 1,
-                kind: BlockKind::Paragraph,
-                quoted: "x".into(),
-                whole_block: true,
-            }],
+            &[review_target(1, BlockKind::Paragraph, "x", true)],
             "直してください"
         )
         .is_none());
     }
 }
+
