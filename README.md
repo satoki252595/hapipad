@@ -1,6 +1,6 @@
-# Hapipad
+# はぴノート (Hapinote)
 
-Hapipad は、はぴまねのローカル Notion 風エディタです。ブラウザだけで Markdown / HTML を編集・レビューする軽量な Rust/WASM アプリで、ブロック編集、ライブプレビュー、Mermaid 図、指摘ブロックを備え、元のファイル形式へ保存します。
+はぴノート (Hapinote) は、はぴまねのローカル Notion 風エディタです。ブラウザだけで Markdown / HTML を編集・レビューする軽量な Rust/WASM アプリで、ブロック編集、ライブプレビュー、Mermaid 図、指摘ブロックを備え、元のファイル形式へ保存します。
 
 The Cargo package name remains `blockpad` so the existing Dioxus/WASM build keeps working.
 
