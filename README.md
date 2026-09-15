@@ -1,8 +1,8 @@
-# Markdownブロックエディタ (MD Block Editor)
+# MD Block Editor（Markdownブロックエディタ）
 
 ローカルの `.md` / `.html` を、ブラウザだけで Notion 風ブロック編集するエディタです。サーバー・アカウント・データベースは使いません。
 
-Cargo パッケージ名は `blockpad` のままです。公開名は **Markdownブロックエディタ / MD Block Editor** です。
+Cargo パッケージ名は `blockpad` のままです。公開名は **MD Block Editor / Markdownブロックエディタ** です。
 
 ## すぐ使う
 
@@ -27,23 +27,23 @@ Cargo パッケージ名は `blockpad` のままです。公開名は **Markdown
 
 編集とライブプレビュー:
 
-![エディタとライブプレビュー](docs/screenshots/editor.png)
+![エディタとライブプレビュー](docs/screenshots/editor.svg)
 
 スラッシュメニュー:
 
-![スラッシュメニュー](docs/screenshots/slash.png)
+![スラッシュメニュー](docs/screenshots/slash.svg)
 
-見出し・リスト・コード・コールアウト・カラム:
+見出し・リスト・コード・コールウト・カラム:
 
-![ブロック種別](docs/screenshots/blocks.png)
+![ブロック種別](docs/screenshots/blocks.svg)
 
 ダークモード:
 
-![ダークモード](docs/screenshots/dark.png)
+![ダークモード](docs/screenshots/dark.svg)
 
 ライブプレビュー（Mermaid・表・カラム）:
 
-![ライブプレビュー](docs/screenshots/preview.png)
+![ライブプレビュー](docs/screenshots/preview.svg)
 
 ## 起動
 
