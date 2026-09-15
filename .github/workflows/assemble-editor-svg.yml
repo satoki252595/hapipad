@@ -1,0 +1,31 @@
+name: assemble-editor-svg
+on:
+  push:
+    paths:
+      - docs/screenshots/_tmp/GO-editor
+permissions:
+  contents: write
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Concatenate verified editor chunks
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          parts = [Path(f'docs/screenshots/_tmp/editor.{i:02d}.txt').read_bytes() for i in range(16)]
+          data = b''.join(parts)
+          assert len(data) == 28316, len(data)
+          assert hashlib.sha256(data).hexdigest() == '15b30d428733836a61a6257f1ca51e385330021880bae0fc20f70a09f9fb4abb'
+          Path('docs/screenshots/editor.svg').write_bytes(data)
+          print('wrote', len(data))
+          PY
+      - name: Commit assembled screenshot
+        run: |
+          git config user.name satoki252595
+          git config user.email 48168408+satoki252595@users.noreply.github.com
+          git add docs/screenshots/editor.svg
+          git commit -m 'Add real editor screenshot.'
+          git push
