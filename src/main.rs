@@ -1,1 +1,3 @@
-FILE_FROM_DISK_/workspace/src/main.rs
+include!("app_part1.rs");
+include!("app_part2.rs");
+include!("app_part3.rs");
