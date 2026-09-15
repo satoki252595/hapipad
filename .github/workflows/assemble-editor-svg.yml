@@ -1,8 +1,11 @@
-name: assemble-editor-svg
+name: assemble-screenshots
 on:
   push:
     paths:
-      - docs/screenshots/_tmp/GO-editor
+      - docs/screenshots/_tmp/GO-slash
+      - docs/screenshots/_tmp/GO-blocks
+      - docs/screenshots/_tmp/GO-dark
+      - docs/screenshots/_tmp/GO-preview
 permissions:
   contents: write
 jobs:
@@ -10,22 +13,83 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Concatenate verified editor chunks
+      - name: Assemble real JPEG-in-SVG screenshots
         run: |
           python3 - <<'PY'
+          import hashlib, subprocess, zlib
           from pathlib import Path
-          import hashlib
-          parts = [Path(f'docs/screenshots/_tmp/editor.{i:02d}.txt').read_bytes() for i in range(16)]
-          data = b''.join(parts)
-          assert len(data) == 28316, len(data)
-          assert hashlib.sha256(data).hexdigest() == '15b30d428733836a61a6257f1ca51e385330021880bae0fc20f70a09f9fb4abb'
-          Path('docs/screenshots/editor.svg').write_bytes(data)
-          print('wrote', len(data))
+
+          def git_sha(data: bytes) -> str:
+              return hashlib.sha1(b'blob %d\0' % len(data) + data).hexdigest()
+
+          def unwrap_chunk(path: Path) -> bytes:
+              header, *lines = path.read_text().splitlines()
+              expect_git, expect_size, expect_sha256 = header.split()
+              payloads = []
+              for i, line in enumerate(lines):
+                  idx = int(line[:2])
+                  crc = int(line[2:6], 16)
+                  payload = line[6:]
+                  assert idx == i, (path.name, i, idx)
+                  got = zlib.crc32(payload.encode('ascii')) & 0xFFFF
+                  assert got == crc, (path.name, i, hex(got), hex(crc), len(line))
+                  payloads.append(payload)
+              data = ''.join(payloads).replace('~', '\n').encode('ascii')
+              assert str(len(data)) == expect_size, (path.name, len(data), expect_size)
+              assert git_sha(data) == expect_git, path.name
+              assert hashlib.sha256(data).hexdigest() == expect_sha256, path.name
+              return data
+
+          JOBS = {
+              'slash': {
+                  'n': 15,
+                  'size': 25664,
+                  'sha256': '6fb48f9b065c5ff6a2b4a38b755fe2d74882dec1bcb1f221e14bfd943bbee783',
+                  'msg': 'Add real slash-menu screenshot.',
+              },
+              'blocks': {
+                  'n': 13,
+                  'size': 21888,
+                  'sha256': '5f204b750ad87337b3f96577f57c2f1717b6e1276ad8374b2304f48a4333b53f',
+                  'msg': 'Add real block-types screenshot.',
+              },
+              'dark': {
+                  'n': 16,
+                  'size': 27868,
+                  'sha256': '49e164330a71c83d2e7341105ddcfad8ed70c6950cb6da7accf1d6c7d7ad9f59',
+                  'msg': 'Add real dark-mode screenshot.',
+              },
+              'preview': {
+                  'n': 12,
+                  'size': 20792,
+                  'sha256': '8a988ef791ef82364263a27c685be63e5522cc152dad0b3b6dad642cdb59b7f9',
+                  'msg': 'Replace placeholder preview screenshot with a real capture.',
+              },
+          }
+
+          tmp = Path('docs/screenshots/_tmp')
+          committed = False
+          subprocess.check_call(['git', 'config', 'user.name', 'satoki252595'])
+          subprocess.check_call(['git', 'config', 'user.email', '48168408+satoki252595@users.noreply.github.com'])
+          for name, spec in JOBS.items():
+              if not (tmp / f'GO-{name}').exists():
+                  print('skip', name, '(no GO file)')
+                  continue
+              parts = [unwrap_chunk(tmp / f'{name}.{i:02d}.txt') for i in range(spec['n'])]
+              data = b''.join(parts)
+              assert len(data) == spec['size'], (name, len(data))
+              assert hashlib.sha256(data).hexdigest() == spec['sha256'], name
+              dest = Path(f'docs/screenshots/{name}.svg')
+              if dest.exists() and dest.read_bytes() == data:
+                  print(name, 'already assembled')
+                  continue
+              dest.write_bytes(data)
+              subprocess.check_call(['git', 'add', str(dest)])
+              subprocess.check_call(['git', 'commit', '-m', spec['msg']])
+              print('committed', name, len(data))
+              committed = True
+          if committed:
+              subprocess.check_call(['git', 'push'])
+          else:
+              print('nothing to push')
           PY
-      - name: Commit assembled screenshot
-        run: |
-          git config user.name satoki252595
-          git config user.email 48168408+satoki252595@users.noreply.github.com
-          git add docs/screenshots/editor.svg
-          git commit -m 'Add real editor screenshot.'
-          git push
