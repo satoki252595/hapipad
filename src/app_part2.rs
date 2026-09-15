@@ -201,10 +201,14 @@ fn render_block_editor(
     {
         class.push_str(" review-target");
     }
+    if kind == BlockKind::ReviewComment && is_checked {
+        class.push_str(" review-resolved");
+    }
     let input_id = format!("editor-block-{id}");
     let block_anchor = format!("block-{id}");
 
     rsx! {
+        div { class: "block-stack",
         div {
             class: "{class}",
             draggable: true,
@@ -457,6 +461,23 @@ fn render_block_editor(
                     },
                     "レビュー"
                 }
+                if kind == BlockKind::ReviewComment {
+                    button {
+                        class: "mini-button",
+                        title: if is_checked { "未解決に戻す" } else { "この指摘を解決する" },
+                        aria_label: if is_checked { "未解決に戻す" } else { "この指摘を解決する" },
+                        onclick: move |_| {
+                            let resolved_now = document.with_mut(|doc| toggle_comment_resolved(doc, id));
+                            persist_review_now(document, review);
+                            notice.set(if resolved_now {
+                                format!("指摘 #{id} を解決済みにしました")
+                            } else {
+                                format!("指摘 #{id} を未解決に戻しました")
+                            });
+                        },
+                        if is_checked { "未解決" } else { "解決" }
+                    }
+                }
                 button {
                     class: "mini-button",
                     title: "プレビューの固定アンカーへ移動",
@@ -494,6 +515,8 @@ fn render_block_editor(
                     "⧉"
                 }
             }
+        }
+        {render_inline_comment_threads(id, document, review, notice)}
         }
     }
 }
@@ -666,9 +689,10 @@ fn render_preview_block(block: Block) -> Element {
         },
         BlockKind::ReviewComment => {
             let (quotes, body) = review_comment_parts(&text);
+            let resolved = block.checked;
             rsx! {
-                aside { id: "{anchor}", class: "review-comment-preview",
-                    span { class: "review-comment-label", "指摘" }
+                aside { id: "{anchor}", class: if resolved { "review-comment-preview resolved" } else { "review-comment-preview" },
+                    span { class: "review-comment-label", if resolved { "指摘 · 解決済み" } else { "指摘 · 未解決" } }
                     if !quotes.is_empty() {
                         for (label, quote) in quotes {
                             div { class: "review-quote-preview",
@@ -934,18 +958,22 @@ fn wrap_selected_text(mut document: Signal<DocumentState>, id: u32, marker: &str
     });
 }
 
-fn current_block_selection(id: u32) -> Option<String> {
+fn current_block_selection(id: u32) -> Option<BlockSelection> {
     #[cfg(target_arch = "wasm32")]
     {
         let raw = read_block_selection(id);
         let mut parts = raw.split('\u{0000}');
-        let _start = parts.next()?;
-        let _end = parts.next()?;
+        let start = parts.next()?.parse().ok()?;
+        let end = parts.next()?.parse().ok()?;
         let quoted = parts.next().unwrap_or("");
         if quoted.is_empty() {
             None
         } else {
-            Some(quoted.to_string())
+            Some(BlockSelection {
+                start,
+                end,
+                quoted: quoted.to_string(),
+            })
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -981,7 +1009,7 @@ fn adopt_text_selection(
     if (review.composing)() == Some(id) {
         return;
     }
-    let Some(quoted) = current_block_selection(id) else {
+    let Some(selection) = current_block_selection(id) else {
         return;
     };
     let Some(block) = document()
@@ -993,17 +1021,12 @@ fn adopt_text_selection(
         return;
     };
     let append = shift || (review.append)();
-    let whole_block = quoted == block.text;
     push_review_target(
         review,
-        ReviewTarget {
-            block_id: block.id,
-            kind: block.kind,
-            quoted,
-            whole_block,
-        },
+        selection_target(&block, selection.quoted, selection.start, selection.end),
         append,
     );
+    persist_review_now(document, review);
     notice.set("選択範囲をレビュー対象にしました".to_string());
 }
 
@@ -1036,14 +1059,10 @@ fn adopt_whole_block(
     let append = shift || (review.append)();
     push_review_target(
         review,
-        ReviewTarget {
-            block_id: block.id,
-            kind: block.kind,
-            quoted: block.text.clone(),
-            whole_block: true,
-        },
+        selection_target(&block, block.text.clone(), 0, block.text.len()),
         append,
     );
+    persist_review_now(document, review);
     notice.set(format!(
         "#{} {} をレビュー対象にしました",
         block.id,
@@ -1188,7 +1207,7 @@ fn build_llm_prompt(doc: &DocumentState, targets: &[ReviewTarget], review: &str)
             "## #{} {}（{}）\n",
             target.block_id,
             target.kind.label(),
-            target_scope_label(target)
+            target_range_label(target)
         ));
         for line in target.quoted.lines() {
             output.push_str(&format!("> {line}\n"));
@@ -1221,9 +1240,13 @@ fn build_llm_json(doc: &DocumentState, targets: &[ReviewTarget], review: &str) -
             json_escape(&target.quoted)
         ));
         output.push_str(&format!(
-            "      \"whole_block\": {}\n",
+            "      \"whole_block\": {},\n",
             if target.whole_block { "true" } else { "false" }
         ));
+        output.push_str(&format!("      \"start\": {},\n", target.start));
+        output.push_str(&format!("      \"end\": {},\n", target.end));
+        output.push_str(&format!("      \"start_line\": {},\n", target.start_line));
+        output.push_str(&format!("      \"end_line\": {}\n", target.end_line));
         output.push_str("    }");
         if index + 1 != targets.len() {
             output.push(',');
@@ -1244,6 +1267,13 @@ fn format_review_comment_text(targets: &[ReviewTarget], body: &str) -> String {
     let mut lines = Vec::new();
     for target in targets {
         lines.push(format!("対象: #{} {}", target.block_id, target.kind.label()));
+        if !target.whole_block {
+            if target.start_line == target.end_line {
+                lines.push(format!("範囲: L{}", target.start_line));
+            } else {
+                lines.push(format!("範囲: L{}–L{}", target.start_line, target.end_line));
+            }
+        }
         if target.quoted.lines().count() <= 1 {
             lines.push(format!("引用: {}", target.quoted.replace('\n', " ")));
         } else {
@@ -1296,6 +1326,8 @@ fn review_comment_parts(text: &str) -> (Vec<(String, String)>, String) {
                 quotes.push((label, rest.to_string()));
                 collecting_quote = false;
             }
+        } else if line.trim().starts_with("状態:") || line.trim().starts_with("範囲:") {
+            collecting_quote = false;
         } else if collecting_quote && (line.starts_with("  ") || line.starts_with('\t')) {
             if let Some((_, quote)) = quotes.last_mut() {
                 if !quote.is_empty() {
@@ -1412,6 +1444,7 @@ fn serialize_markdown_block(doc: &DocumentState, block: &Block) -> String {
         BlockKind::Image => format!("![]({value})"),
         BlockKind::Video => format!("<video controls src=\"{}\"></video>", escape_html(value)),
         BlockKind::ReviewComment => {
+            let value = with_resolved_marker(block.text.trim_end(), block.checked);
             let mut lines = vec!["> [!COMMENT]".to_string()];
             if value.is_empty() {
                 lines.push("> ".to_string());
@@ -1533,7 +1566,12 @@ fn serialize_html_block(doc: &DocumentState, block: &Block) -> String {
             format!("<aside id=\"{id}\" class=\"callout\" data-block=\"callout\"><p>{value}</p>{children}</aside>")
         }
         BlockKind::ReviewComment => {
-            format!("<aside id=\"{id}\" class=\"review-comment\" data-block=\"comment\">{value}</aside>")
+            let resolved = if block.checked {
+                " data-resolved=\"true\""
+            } else {
+                ""
+            };
+            format!("<aside id=\"{id}\" class=\"review-comment\" data-block=\"comment\"{resolved}>{value}</aside>")
         }
         BlockKind::Toggle => {
             let (summary, detail) = toggle_parts(&block.text);
